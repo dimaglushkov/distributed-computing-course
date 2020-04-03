@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-#include "ipc.h"
+#include "logger.h"
 #include "ipc.c"
 
 int get_num_of_subprocs(int argc, char **argv) {
@@ -43,7 +43,14 @@ int run_subproc(IoFdType io_fd) {
     start_msg.s_header.s_type = STARTED;
     start_msg.s_header.s_payload_len = strlen(start_msg.s_payload);
 
+    log_write_all(start_msg.s_payload);
+
     confer_all(&io_fd, &start_msg);
+
+    char * all_started = (char *) malloc(strlen(log_received_all_started_fmt));
+    sprintf(all_started, log_received_all_started_fmt, io_fd.cur_id);
+    log_write_all(all_started);
+    free(all_started);
 
     Message done_msg;
     sprintf(done_msg.s_payload, log_done_fmt, io_fd.cur_id);
@@ -51,7 +58,14 @@ int run_subproc(IoFdType io_fd) {
     done_msg.s_header.s_type = DONE;
     done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
 
+    log_write_all(done_msg.s_payload);
+
     confer_all(&io_fd, &done_msg);
+
+    char * all_done = (char *) malloc(strlen(log_received_all_done_fmt));
+    sprintf(all_done, log_received_all_done_fmt, io_fd.cur_id);
+    log_write_all(all_done);
+    free(all_done);
 
     return 0;
 }
@@ -80,10 +94,20 @@ int run_proc(IoFdType io_fd, pid_t * subproc_pids){
         receive_any(&io_fd, &msg);
     }
 
+    char * all_started = (char *) malloc(strlen(log_received_all_started_fmt));
+    sprintf(all_started, log_received_all_started_fmt, io_fd.cur_id);
+    log_write_all(all_started);
+    free(all_started);
+
     for (int i = 0; i < io_fd.subprocs_num; i++) {
         Message msg;
         receive_any(&io_fd, &msg);
     }
+
+    char * all_done = (char *) malloc(strlen(log_received_all_done_fmt));
+    sprintf(all_done, log_received_all_done_fmt, io_fd.cur_id);
+    log_write_all(all_done);
+    free(all_done);
 
     for (int i = 0; i < io_fd.subprocs_num; i++)
         waitpid(subproc_pids[i], NULL, 0);
@@ -99,6 +123,8 @@ int main(int argc, char **argv) {
 
     IoFdType io_fd = create_pipes(subprocs_num);
 
+    log_begin();
+
     for (int i = 1; i <= subprocs_num; i++) {
         pid_t fork_pid = fork();
 
@@ -112,9 +138,13 @@ int main(int argc, char **argv) {
     }
 
     run_proc(io_fd, pids);
+
+    log_finish();
+
     free(pids);
     free(io_fd.write_fd);
     free(io_fd.read_fd);
+
     return 0;
 }
 

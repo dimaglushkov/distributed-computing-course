@@ -1,15 +1,4 @@
-/**
- * @file     ipc.c
- * @Author   Dima Glushkov
- * @date     April, 2020
- * @brief    A simple IPC library for programming assignments
- *
- */
-
-#include "common.h"
 #include "ipc.h"
-#include "pa1.h"
-
 
 typedef struct {
     local_id cur_id;
@@ -50,20 +39,6 @@ int send_multicast(void * self, const Message * msg) {
 
     return 0;
 }
-
-//------------------------------------------------------------------------------
-
-/** Receive a message from the process specified by id.
- *
- * Might block depending on IPC settings.
- *
- * @param self    Any data structure implemented by students to perform I/O
- * @param from    ID of the process to receive message from
- * @param msg     Message structure allocated by the caller
- *
- * @return 0 on success, any non-zero value on error
- */
-int receive(void * self, local_id from, Message * msg);
 
 //------------------------------------------------------------------------------
 

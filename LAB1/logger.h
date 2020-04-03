@@ -6,17 +6,14 @@
 #include "sys/types.h"
 
 #include "common.h"
-
-typedef struct {
-    pid_t * pids;
-    int pids_num;
-} PidsType;
+#include "ipc.h"
+#include "pa1.h"
 
 FILE *events_log_file;
 
 void log_begin()
 {
-    events_log_file = fopen(events_log, "w");
+    events_log_file = fopen(events_log, "a");
 }
 
 void log_finish()
@@ -24,20 +21,10 @@ void log_finish()
     fclose(events_log_file);
 }
 
-void log_write_all(PidsType pidsType)
+void log_write_all(char * str)
 {
-
-}
-
-void log_started_msg()
-{
-    pid_t pid = getpid();
-    pid_t ppid = getppid();
-    PidsType pidsType;
-    pidsType.pids[0] = pid;
-    pidsType.pids[1] = ppid;
-    pidsType.pids_num = 2;
-    log_write_all(pidsType);
+    fputs(str, events_log_file);
+    printf("%s", str);
 }
 
 #endif //LAB1_LOGGER_H
