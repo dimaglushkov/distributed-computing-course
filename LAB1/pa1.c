@@ -33,14 +33,13 @@ int run_child(IoFdType io_fd)
     msg.s_header.s_type = STARTED;
     msg.s_header.s_payload_len = strlen(msg.s_payload);
 
-    for (local_id i = 0; i <= io_fd.children_num; ++i) {
-        send_multicast(&io_fd, &msg);
-    }
+    send_multicast(&io_fd, &msg);
 
-    for (local_id j = 1; j <= io_fd.children_num; ++j) {
+    for (local_id j = 1; j < io_fd.children_num; ++j) {
         Message * message = (Message *) malloc(sizeof(Message));
         receive_any(&io_fd, message);
-        puts(message->s_payload);
+        printf("%d: %s", io_fd.cur_id, message->s_payload);
+        free(message);
     }
 
     return 0;
