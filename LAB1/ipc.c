@@ -13,7 +13,7 @@
 
 typedef struct {
     local_id cur_id;
-    local_id children_num;
+    local_id subprocs_num;
     int * read_fd, * write_fd;
 } IoFdType;
 
@@ -25,8 +25,7 @@ typedef struct {
 *
 * @return 0 on success, any non-zero value on error
 */
-int send(void * self, local_id dst, const Message * msg)
-{
+int send(void * self, local_id dst, const Message * msg) {
     write(((IoFdType*) self)->write_fd[dst], msg, sizeof(MessageHeader) + msg->s_header.s_payload_len);
     return 0;
 }
@@ -43,10 +42,9 @@ int send(void * self, local_id dst, const Message * msg)
  *
  * @return 0 on success, any non-zero value on error
  */
-int send_multicast(void * self, const Message * msg)
-{
+int send_multicast(void * self, const Message * msg) {
     IoFdType * io_fd = (IoFdType *) self;
-    for (local_id i = 0; i <= io_fd->children_num; i++)
+    for (local_id i = 0; i <= io_fd->subprocs_num; i++)
         if (i != io_fd -> cur_id)
             send(self, i, msg);
 
@@ -79,14 +77,12 @@ int receive(void * self, local_id from, Message * msg);
  *
  * @return 0 on success, any non-zero value on error
  */
-int receive_any(void * self, Message * msg)
-{
+int receive_any(void * self, Message * msg) {
     IoFdType * io_fd = (IoFdType *) self;
 
     read(io_fd->read_fd[io_fd->cur_id], &(msg->s_header), sizeof(MessageHeader));
     read(io_fd->read_fd[io_fd->cur_id], &(msg->s_payload), msg->s_header.s_payload_len);
-
-//    printf("DEBUG: %d -> %s\n", msg->s_header.s_payload_len, msg->s_payload);
+    msg->s_payload[msg->s_header.s_payload_len] = 0;
 
     return 0;
 }
