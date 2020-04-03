@@ -27,7 +27,7 @@ typedef struct {
 */
 int send(void * self, local_id dst, const Message * msg)
 {
-    write(((IoFdType*) self)->write_fd[dst], msg, sizeof(MessageHeader) + strlen(msg->s_payload));
+    write(((IoFdType*) self)->write_fd[dst], msg, sizeof(MessageHeader) + msg->s_header.s_payload_len);
     return 0;
 }
 
@@ -79,4 +79,12 @@ int receive(void * self, local_id from, Message * msg);
  *
  * @return 0 on success, any non-zero value on error
  */
-int receive_any(void * self, Message * msg);
+int receive_any(void * self, Message * msg)
+{
+    IoFdType * io_fd = (IoFdType *) self;
+
+    read(io_fd->read_fd[io_fd->cur_id], &(msg->s_header), sizeof(MessageHeader));
+    read(io_fd->read_fd[io_fd->cur_id], &(msg->s_payload), msg->s_header.s_payload_len);
+
+    return 0;
+}

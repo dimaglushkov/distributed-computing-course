@@ -25,29 +25,63 @@ int wait_for_children(int child_num, pid_t * child_pids)
     return 0;
 }
 
-int proc_notify_all()
-
-int run_child()
+int run_child(IoFdType io_fd)
 {
+    Message msg;
+    sprintf(msg.s_payload, log_started_fmt, io_fd.cur_id, getpid(), getppid());
+    msg.s_header.s_magic = MESSAGE_MAGIC;
+    msg.s_header.s_type = STARTED;
+    msg.s_header.s_payload_len = strlen(msg.s_payload);
+
+    for (local_id i = 0; i <= io_fd.children_num; ++i) {
+        send_multicast(&io_fd, &msg);
+    }
+
+    for (local_id j = 1; j <= io_fd.children_num; ++j) {
+        Message * message = (Message *) malloc(sizeof(Message));
+        receive_any(&io_fd, message);
+        puts(message->s_payload);
+    }
+
     return 0;
 }
 
+IoFdType create_pipes(int child_num)
+{
+    IoFdType io_fd;
+    io_fd.children_num = child_num;
+    io_fd.read_fd = (int *)malloc((child_num + 1) * sizeof(int));
+    io_fd.write_fd = (int *)malloc((child_num + 1) * sizeof(int));
+
+    for (int i = 0; i <= child_num; ++i) {
+        int fds[2];
+        pipe(fds);
+        io_fd.read_fd[i] = fds[0];
+        io_fd.write_fd[i] = fds[1];
+    }
+
+    return io_fd;
+}
 
 int fork_process(int child_num)
 {
     pid_t *pids = (pid_t *)malloc((child_num + 1) * sizeof(pid_t));
     pids[PARENT_ID] = getpid();
 
+    IoFdType io_fd = create_pipes(child_num);
+
     for (int i = 1; i <= child_num; i++)
     {
         pid_t fork_pid = fork();
 
         if (fork_pid == 0)
-            return run_child();
+        {
+            io_fd.cur_id = i;
+            return run_child(io_fd);
+        }
 
         if (fork_pid != 0)
             pids[i] = fork_pid;
-
     }
 
     return wait_for_children(child_num, pids);
@@ -56,7 +90,6 @@ int fork_process(int child_num)
 
 int main(int argc, char **argv)
 {
-
     int child_num = get_amount_of_child(argc, argv);
 
     return fork_process(child_num);
