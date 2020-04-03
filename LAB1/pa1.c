@@ -25,22 +25,43 @@ int wait_for_children(int child_num, pid_t * child_pids)
     return 0;
 }
 
+int notify_all(IoFdType * io_fd, Message * msg)
+{
+    send_multicast(io_fd, msg);
+
+    for (local_id j = 1; j < io_fd->children_num; ++j) {
+        Message * new_msg = (Message *) malloc(sizeof(Message));
+        receive_any(io_fd, new_msg);
+        printf("%d: %s", io_fd->cur_id, new_msg->s_payload);
+        free(new_msg);
+    }
+
+    return 0;
+}
+
+
+
 int run_child(IoFdType io_fd)
 {
-    Message msg;
-    sprintf(msg.s_payload, log_started_fmt, io_fd.cur_id, getpid(), getppid());
-    msg.s_header.s_magic = MESSAGE_MAGIC;
-    msg.s_header.s_type = STARTED;
-    msg.s_header.s_payload_len = strlen(msg.s_payload);
+    Message start_msg;
+    sprintf(start_msg.s_payload, log_started_fmt, io_fd.cur_id, getpid(), getppid());
+    start_msg.s_header.s_magic = MESSAGE_MAGIC;
+    start_msg.s_header.s_type = STARTED;
+    start_msg.s_header.s_payload_len = strlen(start_msg.s_payload);
+//    printf("DEBUG: %d\n", start_msg.s_header.s_payload_len);
 
-    send_multicast(&io_fd, &msg);
+    notify_all(&io_fd, &start_msg);
 
-    for (local_id j = 1; j < io_fd.children_num; ++j) {
-        Message * message = (Message *) malloc(sizeof(Message));
-        receive_any(&io_fd, message);
-        printf("%d: %s", io_fd.cur_id, message->s_payload);
-        free(message);
-    }
+    Message done_msg;
+    sprintf(done_msg.s_payload, log_done_fmt, io_fd.cur_id);
+//    printf("DEBUG: %s", done_msg.s_payload);
+    done_msg.s_header.s_magic = MESSAGE_MAGIC;
+    done_msg.s_header.s_type = DONE;
+    done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
+//    printf("DEBUG: %d\n", done_msg.s_header.s_payload_len);
+
+
+    notify_all(&io_fd, &done_msg);
 
     return 0;
 }
@@ -83,7 +104,11 @@ int fork_process(int child_num)
             pids[i] = fork_pid;
     }
 
-    return wait_for_children(child_num, pids);
+    wait_for_children(child_num, pids);
+    free(pids);
+    free(io_fd.write_fd);
+    free(io_fd.read_fd);
+    return 0;
 }
 
 

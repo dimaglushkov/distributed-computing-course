@@ -86,5 +86,7 @@ int receive_any(void * self, Message * msg)
     read(io_fd->read_fd[io_fd->cur_id], &(msg->s_header), sizeof(MessageHeader));
     read(io_fd->read_fd[io_fd->cur_id], &(msg->s_payload), msg->s_header.s_payload_len);
 
+//    printf("DEBUG: %d -> %s\n", msg->s_header.s_payload_len, msg->s_payload);
+
     return 0;
 }
