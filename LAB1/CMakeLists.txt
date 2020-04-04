@@ -3,4 +3,4 @@ project(LAB1 C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(LAB1 pa1.c logger.h)
+add_executable(LAB1 ipc.c pa1.c )
