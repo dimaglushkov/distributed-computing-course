@@ -5,7 +5,7 @@
 #include <sys/wait.h>
 
 #include "logger.h"
-#include "io_fd.h"
+#include "ipc_io.h"
 #include "ipc.h"
 
 int get_num_of_subprocs(int argc, char **argv) {
@@ -22,48 +22,24 @@ int get_num_of_subprocs(int argc, char **argv) {
 }
 
 
-void init_io_fd(IoFdType * io_fd) {
-    io_fd->read_fd  = (int **)malloc((io_fd->subprocs_num + 1) * sizeof(int*));
-    io_fd->write_fd = (int **)malloc((io_fd->subprocs_num + 1) * sizeof(int*));
-
-    for(int i = 0; i <= io_fd->subprocs_num; i++) {
-        io_fd->read_fd[i]  = (int *) malloc((io_fd->subprocs_num + 1) * sizeof(int));
-        io_fd->write_fd[i] = (int *) malloc((io_fd->subprocs_num + 1) * sizeof(int));
-    }
-}
-
-
-void free_io_fd(IoFdType * io_fd) {
-    for(int i = 0; i <= io_fd->subprocs_num; i++) {
-        free(io_fd->read_fd[i]);
-        free(io_fd->write_fd[i]);
-    }
-    free(io_fd->read_fd);
-    free(io_fd->write_fd);
-
-}
-
-
-int confer_all(IoFdType * io_fd, Message * msg) {
+int confer_all(IOLinker * io_fd, Message * msg) {
 
     send_multicast(io_fd, msg);
 
     for (local_id from = 1; from <= io_fd->subprocs_num; from++)
-        if (from != io_fd->cur_id){
-        Message * new_msg = (Message *) malloc(sizeof(Message));
-        receive(io_fd, from, new_msg);
-        free(new_msg);
+        if (from != io_fd->cur_id) {
+            Message * new_msg = (Message *) malloc(sizeof(Message));
+            receive(io_fd, from, new_msg);
+            free(new_msg);
         }
 
     return 0;
 }
 
 
-IoFdType create_pipes(local_id subproc_num) {
-    IoFdType io_fd;
+IOLinker create_pipes(local_id subproc_num) {
+    IOLinker io_fd;
     io_fd.subprocs_num = subproc_num;
-    init_io_fd(&io_fd);
-
 
     for (int src = 0; src <= subproc_num; src++)
         for (int dst = 0; dst <= subproc_num; dst++)
@@ -78,7 +54,7 @@ IoFdType create_pipes(local_id subproc_num) {
 }
 
 
-int filter_pipes(IoFdType * io_fd){
+int filter_pipes(IOLinker *io_fd){
     for(int src = 0; src <= io_fd->subprocs_num; src++)
         for(int dst = 0; dst <= io_fd->subprocs_num; dst++) {
             if (src != io_fd->cur_id) {
@@ -94,21 +70,11 @@ int filter_pipes(IoFdType * io_fd){
 }
 
 
-int run_subproc(IoFdType io_fd) {
+int run_subproc(IOLinker io_fd) {
 
     filter_pipes(&io_fd);
 
-//    printf("%d, %d\n", getpid(), io_fd.cur_id);
-
-//    if (io_fd.cur_id == 1) {
-//        printf("<<< %d >>>\n", io_fd.cur_id);
-//        for (int i = 0; i <= io_fd.subprocs_num; i++) {
-//            for (int j = 0; j <= io_fd.subprocs_num; j++)
-//                printf("%2d/%2d ", io_fd.write_fd[i][j], io_fd.read_fd[i][j]);
-//            printf("\n");
-//        }
-//    }
-
+    // starting
     Message start_msg;
     sprintf(start_msg.s_payload, log_started_fmt, io_fd.cur_id, getpid(), getppid());
     start_msg.s_header.s_magic = MESSAGE_MAGIC;
@@ -119,11 +85,14 @@ int run_subproc(IoFdType io_fd) {
 
     confer_all(&io_fd, &start_msg);
 
-    char * all_started = (char *) malloc(strlen(log_received_all_started_fmt));
-    sprintf(all_started, log_received_all_started_fmt, io_fd.cur_id);
-    log_write_all(all_started);
-    free(all_started);
+    log_all_started(io_fd.cur_id);
 
+    // --------------------------------------
+    // actual work
+
+
+    // --------------------------------------
+    // finishing
     Message done_msg;
     sprintf(done_msg.s_payload, log_done_fmt, io_fd.cur_id);
     done_msg.s_header.s_magic = MESSAGE_MAGIC;
@@ -134,47 +103,29 @@ int run_subproc(IoFdType io_fd) {
 
     confer_all(&io_fd, &done_msg);
 
-    char * all_done = (char *) malloc(strlen(log_received_all_done_fmt));
-    sprintf(all_done, log_received_all_done_fmt, io_fd.cur_id);
-    log_write_all(all_done);
-    free(all_done);
+    log_all_done(io_fd.cur_id);
 
-    free_io_fd(&io_fd);
     return 0;
 }
 
 
-int run_proc(IoFdType io_fd, pid_t * pids){
+int run_proc(IOLinker io_fd, pid_t * pids){
     io_fd.cur_id = 0;
-
     filter_pipes(&io_fd);
 
-//    printf("<<< %d >>>\n", io_fd.cur_id);
-//    for (int i = 0; i <= io_fd.subprocs_num; i++) {
-//        for (int j = 0; j <= io_fd.subprocs_num; j++)
-//            printf("%2d/%2d ", io_fd.write_fd[i][j], io_fd.read_fd[i][j]);
-//        printf("\n");
-//    }
+    for (int from = 1; from <= io_fd.subprocs_num; from++) {
+        Message msg;
+        receive(&io_fd, from, &msg);
+    }
+    log_all_started(io_fd.cur_id);
+
 
     for (int from = 1; from <= io_fd.subprocs_num; from++) {
         Message msg;
         receive(&io_fd, from, &msg);
     }
+    log_all_done(io_fd.cur_id);
 
-    char * all_started = (char *) malloc(strlen(log_received_all_started_fmt));
-    sprintf(all_started, log_received_all_started_fmt, io_fd.cur_id);
-    log_write_all(all_started);
-    free(all_started);
-
-    for (int from = 1; from <= io_fd.subprocs_num; from++) {
-        Message msg;
-        receive(&io_fd, from, &msg);
-    }
-
-    char * all_done = (char *) malloc(strlen(log_received_all_done_fmt));
-    sprintf(all_done, log_received_all_done_fmt, io_fd.cur_id);
-    log_write_all(all_done);
-    free(all_done);
 
     for (int i = 1; i <= io_fd.subprocs_num; i++)
         waitpid(pids[i], NULL, 0);
@@ -188,7 +139,7 @@ int main(int argc, char **argv) {
     pid_t *pids = (pid_t *)malloc((subprocs_num + 1) * sizeof(pid_t));
     pids[PARENT_ID] = getpid();
 
-    IoFdType io_fd = create_pipes(subprocs_num);
+    IOLinker io_fd = create_pipes(subprocs_num);
 
     log_begin();
 
@@ -207,9 +158,7 @@ int main(int argc, char **argv) {
     run_proc(io_fd, pids);
 
     log_finish();
-
     free(pids);
-    free_io_fd(&io_fd);
 
     return 0;
 }
