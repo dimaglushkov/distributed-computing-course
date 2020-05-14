@@ -37,6 +37,7 @@ IOLinker create_pipes(local_id subproc_num) {
 
                 // for non-blocking read
                 fcntl(fds[0], F_SETFL, O_NONBLOCK);
+                fcntl(fds[1], F_SETFL, O_NONBLOCK);
 
                 io_fd.read_fd[src][dst] = fds[0];
                 io_fd.write_fd[src][dst] = fds[1];
@@ -48,16 +49,17 @@ IOLinker create_pipes(local_id subproc_num) {
 
 int filter_pipes(IOLinker *io_fd){
     for(int src = 0; src <= io_fd->subprocs_num; src++)
-        for(int dst = 0; dst <= io_fd->subprocs_num; dst++) {
-            if (src != io_fd->balance.s_id) {
-                close(io_fd->write_fd[src][dst]);
-                io_fd->write_fd[src][dst] = 0;
+        for(int dst = 0; dst <= io_fd->subprocs_num; dst++)
+            if (src != dst) {
+                if (src != io_fd->balance.s_id) {
+                    close(io_fd->write_fd[src][dst]);
+                    io_fd->write_fd[src][dst] = 0;
+                }
+                if (dst != io_fd->balance.s_id) {
+                    close(io_fd->read_fd[src][dst]);
+                    io_fd->read_fd[src][dst] = 0;
+                }
             }
-            if (dst != io_fd->balance.s_id) {
-                close(io_fd->read_fd[src][dst]);
-                io_fd->read_fd[src][dst] = 0;
-            }
-        }
     return 0;
 }
 
