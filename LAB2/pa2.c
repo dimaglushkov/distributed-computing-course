@@ -90,6 +90,8 @@ void transfer(void * parent_data, local_id src, local_id dst, balance_t amount)
 
 int run_subproc(IOLinker io_fd) {
     Message ack_msg;
+    Message done_msg;
+    Message bhistory_msg;
     TransferOrder * transfer;
     filter_pipes(&io_fd);
 
@@ -133,7 +135,6 @@ int run_subproc(IOLinker io_fd) {
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
                     io_fd.balance.s_history_len++;
 
-                    printf("\tI am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
                     send(&io_fd, transfer->s_dst, msg);
 
                     char transfer_out_str[strlen(log_transfer_out_fmt)];
@@ -161,7 +162,6 @@ int run_subproc(IOLinker io_fd) {
                     ack_msg.s_header.s_magic = MESSAGE_MAGIC;
                     ack_msg.s_header.s_payload_len = 0;
 
-                    printf("\tI am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
                     send(&io_fd, 0, &ack_msg);
 
                     char transfer_in_str[strlen(log_transfer_in_fmt)];
@@ -171,7 +171,19 @@ int run_subproc(IOLinker io_fd) {
                 break;
 
             case STOP:
+                done_msg.s_header.s_payload_len = 0;
+                done_msg.s_header.s_type = DONE;
+                done_msg.s_header.s_local_time = get_physical_time();
+                done_msg.s_header.s_magic = MESSAGE_MAGIC;
 
+                confer_all(&io_fd, &done_msg);
+
+                // exchanged done with everybody
+
+                bhistory_msg.s_header.s_type = BALANCE_HISTORY;
+                bhistory_msg.s_header.s_local_time = get_physical_time();
+                bhistory_msg.s_header.s_magic = MESSAGE_MAGIC;
+//                bhistory_msg.s_header.s_payload_len = sizeof(io_fd);
 
                 running = 0;
                 break;
@@ -182,7 +194,6 @@ int run_subproc(IOLinker io_fd) {
 
     // --------------------------------------
     // finishing
-    Message done_msg;
     sprintf(done_msg.s_payload, log_done_fmt, get_physical_time(), io_fd.balance.s_id, io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
     done_msg.s_header.s_magic = MESSAGE_MAGIC;
     done_msg.s_header.s_type = DONE;
@@ -209,6 +220,18 @@ int run_proc(IOLinker io_fd, pid_t * pids){
     log_all_started(get_physical_time(), io_fd.balance.s_id);
 
     bank_robbery(&io_fd, io_fd.subprocs_num);
+    puts("Robbery finished");
+
+    Message stop_msg;
+    stop_msg.s_header.s_type = STOP;
+    stop_msg.s_header.s_magic = MESSAGE_MAGIC;
+    stop_msg.s_header.s_local_time = get_physical_time();
+    stop_msg.s_header.s_payload_len = 0;
+
+    confer_all(&io_fd, &stop_msg);
+
+    // EVERYONE IS DONE
+
 
     for (int from = 1; from <= io_fd.subprocs_num; from++) {
         Message msg;
