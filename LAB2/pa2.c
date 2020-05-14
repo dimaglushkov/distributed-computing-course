@@ -339,6 +339,8 @@ int run_subproc(IOLinker io_fd) {
 int run_proc(IOLinker io_fd, pid_t * pids){
     Message * balance_history_msg;
     AllHistory all_history;
+    time_t max_time = 0;
+
     all_history.s_history_len = io_fd.subprocs_num;
 
     io_fd.balance.s_id = 0;
@@ -364,11 +366,32 @@ int run_proc(IOLinker io_fd, pid_t * pids){
     for (int i = 0; i < io_fd.subprocs_num; i++) {
         BalanceHistory new_history;
         balance_history_msg = (Message *) malloc(sizeof(Message));
-        receive_any(&io_fd, balance_history_msg);
+        receive(&io_fd, i + 1, balance_history_msg);
         new_history = *(BalanceHistory*) balance_history_msg->s_payload;
         all_history.s_history[i] = new_history;
 
+        if (new_history.s_history[new_history.s_history_len - 1].s_time > max_time){
+            max_time = new_history.s_history[new_history.s_history_len - 1].s_time;
+        }
+
         free(balance_history_msg);
+    }
+
+    for (int i = 0; i < io_fd.subprocs_num; i++) {
+        time_t cur_max_time = all_history.s_history[i].s_history[all_history.s_history[i].s_history_len - 1].s_time;
+        uint8_t cur_len = all_history.s_history[i].s_history_len;
+
+        while (cur_max_time < max_time) {
+            all_history.s_history[i].s_history[cur_len].s_balance =
+                    all_history.s_history[i].s_history[cur_len - 1].s_balance;
+            all_history.s_history[i].s_history[cur_len].s_time = cur_len - 1;
+            all_history.s_history[i].s_history[cur_len].s_balance_pending_in = 0;
+
+            cur_len++;
+            cur_max_time++;
+        }
+
+        all_history.s_history[i].s_history_len = cur_len;
     }
 
     print_history(&all_history);
