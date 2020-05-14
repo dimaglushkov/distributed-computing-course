@@ -12,9 +12,11 @@
 void bank_robbery(void * parent_data, local_id max_id)
 {
     for (int i = 1; i < max_id; ++i) {
+        printf("Robbery: from %d to %d, %d$\n", i, i + 1, i);
         transfer(parent_data, i, i + 1, i);
     }
     if (max_id > 1) {
+        printf("Robbery: from %d to %d, %d$\n", max_id, 1, 1);
         transfer(parent_data, max_id, 1, 1);
     }
 }

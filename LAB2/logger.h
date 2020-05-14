@@ -8,6 +8,7 @@
 #include "common.h"
 #include "ipc.h"
 #include "pa2345.h"
+#include "banking.h"
 
 FILE *events_log_file;
 
@@ -28,16 +29,16 @@ void log_write_all(char * str) {
 }
 
 
-void log_all_started(local_id id) {
+void log_all_started(timestamp_t time, local_id id) {
     char all_started[strlen(log_received_all_started_fmt)];
-    sprintf(all_started, log_received_all_started_fmt, id);
+    sprintf(all_started, log_received_all_started_fmt, time, id);
     log_write_all(all_started);
 }
 
 
-void log_all_done(local_id id) {
+void log_all_done(timestamp_t time, local_id id) {
     char all_done[strlen(log_received_all_done_fmt)];
-    sprintf(all_done, log_received_all_done_fmt, id);
+    sprintf(all_done, log_received_all_done_fmt, time, id);
     log_write_all(all_done);
 }
 

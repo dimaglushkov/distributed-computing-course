@@ -8,9 +8,7 @@
 #include "logger.h"
 #include "ipc_io.h"
 #include "ipc.h"
-#include "ipc.c"
 #include "banking.h"
-
 
 int confer_all(IOLinker * io_fd, Message * msg) {
 
@@ -97,7 +95,7 @@ int run_subproc(IOLinker io_fd) {
 
     // starting
     Message start_msg;
-    sprintf(start_msg.s_payload, log_started_fmt, io_fd.balance.s_id, getpid(), getppid());
+    sprintf(start_msg.s_payload, log_started_fmt, get_physical_time(), io_fd.balance.s_id, getpid(), getppid(), io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
     start_msg.s_header.s_magic = MESSAGE_MAGIC;
     start_msg.s_header.s_type = STARTED;
     start_msg.s_header.s_payload_len = strlen(start_msg.s_payload);
@@ -106,7 +104,7 @@ int run_subproc(IOLinker io_fd) {
 
     confer_all(&io_fd, &start_msg);
 
-    log_all_started(io_fd.balance.s_id);
+    log_all_started(get_physical_time(), io_fd.balance.s_id);
 
     // --------------------------------------
     // actual work
@@ -135,6 +133,7 @@ int run_subproc(IOLinker io_fd) {
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
                     io_fd.balance.s_history_len++;
 
+                    printf("I am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
                     send(&io_fd, transfer->s_dst, msg);
                 }
                 else{
@@ -158,6 +157,7 @@ int run_subproc(IOLinker io_fd) {
                     ack_msg.s_header.s_magic = MESSAGE_MAGIC;
                     ack_msg.s_header.s_payload_len = 0;
 
+                    printf("I am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
                     send(&io_fd, 0, &ack_msg);
                 }
                 break;
@@ -170,13 +170,12 @@ int run_subproc(IOLinker io_fd) {
         }
 
         free(msg);
-    }
-    while(running);
+    } while(running);
 
     // --------------------------------------
     // finishing
     Message done_msg;
-    sprintf(done_msg.s_payload, log_done_fmt, io_fd.balance.s_id);
+    sprintf(done_msg.s_payload, log_done_fmt, get_physical_time(), io_fd.balance.s_id, io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
     done_msg.s_header.s_magic = MESSAGE_MAGIC;
     done_msg.s_header.s_type = DONE;
     done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
@@ -185,7 +184,7 @@ int run_subproc(IOLinker io_fd) {
 
     confer_all(&io_fd, &done_msg);
 
-    log_all_done(io_fd.balance.s_id);
+    log_all_done(get_physical_time(), io_fd.balance.s_id);
 
     return 0;
 }
@@ -199,7 +198,7 @@ int run_proc(IOLinker io_fd, pid_t * pids){
         Message msg;
         receive(&io_fd, from, &msg);
     }
-    log_all_started(io_fd.balance.s_id);
+    log_all_started(get_physical_time(), io_fd.balance.s_id);
 
     bank_robbery(&io_fd, io_fd.subprocs_num);
 
@@ -207,7 +206,7 @@ int run_proc(IOLinker io_fd, pid_t * pids){
         Message msg;
         receive(&io_fd, from, &msg);
     }
-    log_all_done(io_fd.balance.s_id);
+    log_all_done(get_physical_time(), io_fd.balance.s_id);
 
 
     for (int i = 1; i <= io_fd.subprocs_num; i++)
@@ -228,7 +227,7 @@ int main(int argc, char **argv) {
             subprocs_num = (local_id)strtol(argv[++i], NULL, 10);
             init_balances = (int*) malloc(sizeof(int) * subprocs_num);
             for (int j = 0; j < subprocs_num; j++)
-                init_balances[j] = (int)strtol(argv[i + j], NULL, 10);
+                init_balances[j] = (int)strtol(argv[i + j + 1], NULL, 10);
         }
     }
 
