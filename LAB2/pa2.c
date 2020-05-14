@@ -133,8 +133,12 @@ int run_subproc(IOLinker io_fd) {
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
                     io_fd.balance.s_history_len++;
 
-                    printf("I am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
+                    printf("\tI am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
                     send(&io_fd, transfer->s_dst, msg);
+
+                    char transfer_out_str[strlen(log_transfer_out_fmt)];
+                    sprintf(transfer_out_str, log_transfer_out_fmt, get_physical_time(), io_fd.balance.s_id, transfer->s_amount, transfer->s_dst);
+                    log_write_all(transfer_out_str);
                 }
                 else{
                     while (get_physical_time() != io_fd.balance.s_history_len - 1) {
@@ -157,8 +161,12 @@ int run_subproc(IOLinker io_fd) {
                     ack_msg.s_header.s_magic = MESSAGE_MAGIC;
                     ack_msg.s_header.s_payload_len = 0;
 
-                    printf("I am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
+                    printf("\tI am %d: dst - %d, src - %d\n", io_fd.balance.s_id, transfer->s_dst, transfer->s_src);
                     send(&io_fd, 0, &ack_msg);
+
+                    char transfer_in_str[strlen(log_transfer_in_fmt)];
+                    sprintf(transfer_in_str, log_transfer_in_fmt, get_physical_time(), io_fd.balance.s_id, transfer->s_amount, transfer->s_src);
+                    log_write_all(transfer_in_str);
                 }
                 break;
 
