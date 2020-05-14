@@ -82,16 +82,137 @@ void transfer(void * parent_data, local_id src, local_id dst, balance_t amount)
 
     send(io_fd, src, &start_of_transfer_msg);
     receive(io_fd, dst, end_of_transfer_msg);
+    free(end_of_transfer_msg);
 
 //    end_of_transfer_msg->s_header.s_type == ACK
 
 }
 
 
+void print_history(const AllHistory * history)
+{
+    if (history == NULL) {
+        fprintf(stderr, "print_history: history is NULL!\n");
+        exit(1);
+    }
+
+    typedef struct {
+        int balance;
+        int pending;
+    } Pair;
+
+    int max_time = 0;
+    int has_pending = 0;
+    int nrows = history->s_history_len + 2; // 0 row (parent) is not used + Total row
+    Pair table[nrows][MAX_T];
+    memset(table, 0, sizeof(table));
+
+    for (int i = 0; i < history->s_history_len; ++i) {
+        for (int j = 0; j < history->s_history[i].s_history_len; ++j) {
+            const BalanceState * change = &history->s_history[i].s_history[j];
+            int id = history->s_history[i].s_id;
+            table[id][change->s_time].balance = change->s_balance;
+            table[id][change->s_time].pending = change->s_balance_pending_in;
+            if (max_time < change->s_time) {
+                max_time = change->s_time;
+            }
+            if (change->s_balance_pending_in > 0) {
+                has_pending = 1;
+            }
+        }
+    }
+
+    if (max_time > MAX_T) {
+        fprintf(stderr, "print_history: max value of s_time: %d, expected s_time < %d!\n",
+                max_time, MAX_T);
+        return;
+    }
+
+    // Calculate total sum
+    for (int j = 0; j <= max_time; ++j) {
+        int sum = 0;
+        for (int i = 1; i <= history->s_history_len; ++i) {
+            sum += table[i][j].balance + table[i][j].pending;
+        }
+        table[nrows-1][j].balance = sum;
+        table[nrows-1][j].pending = 0;
+    }
+
+    // pretty print
+    fflush(stderr);
+    fflush(stdout);
+
+    const char * cell_format_pending = " %d (%d) ";
+    const char * cell_format = " %d ";
+
+    char buf[128];
+    int max_cell_width = 0;
+    for (int i = 1; i <= history->s_history_len; ++i) {
+        for (int j = 0; j <= max_time; ++j) {
+            if (has_pending) {
+                sprintf(buf, cell_format_pending, table[i][j].balance, table[i][j].pending);
+            } else {
+                sprintf(buf, cell_format, table[i][j].balance);
+            }
+            int width = strlen(buf);
+            if (max_cell_width < width) {
+                max_cell_width = width;
+            }
+        }
+    }
+
+    const char * const first_column_header = "Proc \\ time |";
+    const int first_column_width = strlen(first_column_header);
+    const int underscrores = (first_column_width + 1) + (max_cell_width + 1) * (max_time + 1);
+
+    char hline[underscrores + 2];
+    for (int i = 0; i < underscrores; ++i) {
+        hline[i] = '-';
+    }
+    hline[underscrores] = '\n';
+    hline[underscrores + 1] = '\0';
+
+    if (has_pending) {
+        printf("\nFull balance history for time range [0;%d], $balance ($pending):\n", max_time);
+    } else {
+        printf("\nFull balance history for time range [0;%d], $balance:\n", max_time);
+    }
+    printf(hline);
+
+    printf("%s ", first_column_header);
+    for (int j = 0; j <= max_time; ++j) {
+        printf("%*d |", max_cell_width - 1, j);
+    }
+    printf("\n");
+    printf(hline);
+
+    for (int i = 1; i <= history->s_history_len; ++i) {
+        printf("%11d | ", i);
+        for (int j = 0; j <= max_time; ++j) {
+            if (has_pending) {
+                sprintf(buf, cell_format_pending, table[i][j].balance, table[i][j].pending);
+            } else {
+                sprintf(buf, cell_format, table[i][j].balance);
+            }
+            printf("%*s|", max_cell_width, buf);
+        }
+        printf("\n");
+        printf(hline);
+    }
+
+    printf("      Total | ");
+    for (int j = 0; j <= max_time; ++j) {
+        printf("%*d |", max_cell_width - 1, table[nrows-1][j].balance);
+    }
+    printf("\n");
+    printf(hline);
+}
+
+
 int run_subproc(IOLinker io_fd) {
     Message ack_msg;
     Message done_msg;
-    Message bhistory_msg;
+    Message balance_history_msg;
     TransferOrder * transfer;
     filter_pipes(&io_fd);
 
@@ -121,6 +242,7 @@ int run_subproc(IOLinker io_fd) {
                 transfer = (TransferOrder*) msg->s_payload;
 
                 if (transfer->s_src == io_fd.balance.s_id){
+                    printf("\tBalance b4: %d\n", io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
                     while (get_physical_time() != io_fd.balance.s_history_len - 1) {
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
                                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
@@ -130,12 +252,14 @@ int run_subproc(IOLinker io_fd) {
                         io_fd.balance.s_history_len++;
                     }
 
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance -= transfer->s_amount;
+                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance - transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_physical_time();
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
                     io_fd.balance.s_history_len++;
 
                     send(&io_fd, transfer->s_dst, msg);
+
+                    printf("\tBalance after: %d\n", io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
 
                     char transfer_out_str[strlen(log_transfer_out_fmt)];
                     sprintf(transfer_out_str, log_transfer_out_fmt, get_physical_time(), io_fd.balance.s_id, transfer->s_amount, transfer->s_dst);
@@ -151,7 +275,7 @@ int run_subproc(IOLinker io_fd) {
                         io_fd.balance.s_history_len++;
                     }
 
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance += transfer->s_amount;
+                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance + transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_physical_time();
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
 
@@ -180,10 +304,13 @@ int run_subproc(IOLinker io_fd) {
 
                 // exchanged done with everybody
 
-                bhistory_msg.s_header.s_type = BALANCE_HISTORY;
-                bhistory_msg.s_header.s_local_time = get_physical_time();
-                bhistory_msg.s_header.s_magic = MESSAGE_MAGIC;
-//                bhistory_msg.s_header.s_payload_len = sizeof(io_fd);
+                balance_history_msg.s_header.s_type = BALANCE_HISTORY;
+                balance_history_msg.s_header.s_local_time = get_physical_time();
+                balance_history_msg.s_header.s_magic = MESSAGE_MAGIC;
+                balance_history_msg.s_header.s_payload_len = sizeof(BalanceHistory);
+                memcpy(&balance_history_msg.s_payload, &io_fd.balance, sizeof(BalanceHistory));
+
+                send(&io_fd, 0, &balance_history_msg);
 
                 running = 0;
                 break;
@@ -210,8 +337,13 @@ int run_subproc(IOLinker io_fd) {
 
 
 int run_proc(IOLinker io_fd, pid_t * pids){
+    Message * balance_history_msg;
+    AllHistory all_history;
+    all_history.s_history_len = io_fd.subprocs_num;
+
     io_fd.balance.s_id = 0;
     filter_pipes(&io_fd);
+
 
     for (int from = 1; from <= io_fd.subprocs_num; from++) {
         Message msg;
@@ -220,7 +352,6 @@ int run_proc(IOLinker io_fd, pid_t * pids){
     log_all_started(get_physical_time(), io_fd.balance.s_id);
 
     bank_robbery(&io_fd, io_fd.subprocs_num);
-    puts("Robbery finished");
 
     Message stop_msg;
     stop_msg.s_header.s_type = STOP;
@@ -230,8 +361,17 @@ int run_proc(IOLinker io_fd, pid_t * pids){
 
     confer_all(&io_fd, &stop_msg);
 
-    // EVERYONE IS DONE
+    for (int i = 0; i < io_fd.subprocs_num; i++) {
+        BalanceHistory new_history;
+        balance_history_msg = (Message *) malloc(sizeof(Message));
+        receive_any(&io_fd, balance_history_msg);
+        new_history = *(BalanceHistory*) balance_history_msg->s_payload;
+        all_history.s_history[i] = new_history;
 
+        free(balance_history_msg);
+    }
+
+    print_history(&all_history);
 
     for (int from = 1; from <= io_fd.subprocs_num; from++) {
         Message msg;
@@ -293,6 +433,7 @@ int main(int argc, char **argv) {
 //    print_history()
 
     log_finish();
+    free(init_balances);
     free(pids);
 
     return 0;
