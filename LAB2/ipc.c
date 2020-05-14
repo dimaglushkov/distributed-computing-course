@@ -27,8 +27,7 @@ int receive(void * self, local_id from, Message * msg) {
     } while (num_bytes_read <= 0);
 
     read(io_fd->read_fd[from][io_fd->balance.s_id], &(msg->s_payload), msg->s_header.s_payload_len);
-//    \0 msg->s_payload[msg->s_header.s_payload_len] = 0;
-//    add sleep
+//    sleep(1);
 
     return 0;
 }
@@ -39,15 +38,11 @@ int receive_any(void * self, Message * msg) {
     int src_id = 0;
 
     while (1) {
-        if (src_id == io_fd->subprocs_num)
+        if (src_id > io_fd->subprocs_num)
             src_id = 0;
 
-        if (src_id != io_fd->balance.s_id &&
-            read(io_fd->read_fd[src_id][io_fd->balance.s_id], &(msg->s_header), sizeof(MessageHeader)) > 0) {
-
+        if (src_id != io_fd->balance.s_id && read(io_fd->read_fd[src_id][io_fd->balance.s_id], &(msg->s_header), sizeof(MessageHeader)) > 0) {
             read(io_fd->read_fd[src_id][io_fd->balance.s_id], &(msg->s_payload), msg->s_header.s_payload_len);
-//            \0 msg->s_payload[msg->s_header.s_payload_len] = 0;
-
             break;
         }
 
