@@ -91,6 +91,8 @@ void transfer(void * parent_data, local_id src, local_id dst, balance_t amount)
 
 
 int run_subproc(IOLinker io_fd) {
+    Message ack_msg;
+    TransferOrder * transfer;
     filter_pipes(&io_fd);
 
     // starting
@@ -115,11 +117,19 @@ int run_subproc(IOLinker io_fd) {
         receive_any(&io_fd, msg);
 
         switch (msg->s_header.s_type){
-            TransferOrder * transfer;
             case TRANSFER:
                 transfer = (TransferOrder*) msg->s_payload;
 
                 if (transfer->s_src == io_fd.balance.s_id){
+                    while (get_physical_time() != io_fd.balance.s_history_len - 1) {
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
+                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+
+                        io_fd.balance.s_history_len++;
+                    }
+
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance -= transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_physical_time();
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
@@ -128,12 +138,27 @@ int run_subproc(IOLinker io_fd) {
                     send(&io_fd, transfer->s_dst, msg);
                 }
                 else{
+                    while (get_physical_time() != io_fd.balance.s_history_len - 1) {
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
+                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+
+                        io_fd.balance.s_history_len++;
+                    }
+
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance += transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_physical_time();
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+
                     io_fd.balance.s_history_len++;
 
+                    ack_msg.s_header.s_type = ACK;
+                    ack_msg.s_header.s_local_time = get_physical_time();
+                    ack_msg.s_header.s_magic = MESSAGE_MAGIC;
+                    ack_msg.s_header.s_payload_len = 0;
 
+                    send(&io_fd, 0, &ack_msg);
                 }
                 break;
 
