@@ -265,15 +265,14 @@ int run_subproc(IOLinker io_fd) {
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
                                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in =
-                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance_pending_in;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
 
                         io_fd.balance.s_history_len++;
                     }
 
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance - transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = transfer->s_amount;
+                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
                     io_fd.balance.s_history_len++;
 
                     set_time_msg(msg);
@@ -288,15 +287,14 @@ int run_subproc(IOLinker io_fd) {
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
                                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in =
-                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance_pending_in;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
 
                         io_fd.balance.s_history_len++;
                     }
 
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance + transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = -(transfer->s_amount);
+                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
 
                     io_fd.balance.s_history_len++;
 
@@ -392,6 +390,8 @@ int run_proc(IOLinker io_fd, pid_t * pids){
         free(balance_history_msg);
     }
 
+    int total = 0;
+
     for (int i = 0; i < io_fd.subprocs_num; i++) {
         time_t cur_max_time = all_history.s_history[i].s_history[all_history.s_history[i].s_history_len - 1].s_time;
         uint8_t cur_len = all_history.s_history[i].s_history_len;
@@ -406,11 +406,26 @@ int run_proc(IOLinker io_fd, pid_t * pids){
             cur_max_time++;
         }
 
+        total += all_history.s_history[i].s_history[0].s_balance;
+
         all_history.s_history[i].s_history_len = cur_len;
     }
 
-    print_history(&all_history);
+    for (int i = 1; i <= max_time; i++){
+        int cur_total = 0;
+        for (int j = 0; j < io_fd.subprocs_num; j++)
+            cur_total += all_history.s_history[j].s_history[i].s_balance;
 
+        if (cur_total < total){
+            for (int j = 0; j < io_fd.subprocs_num; j++){
+                if (all_history.s_history[j].s_history[i - 1].s_balance_pending_in != 0 || all_history.s_history[j].s_history[i].s_balance < all_history.s_history[j].s_history[i - 1].s_balance)
+                    all_history.s_history[j].s_history[i].s_balance_pending_in = total - cur_total;
+            }
+        }
+
+    }
+
+    print_history(&all_history);
 
     for (int i = 1; i <= io_fd.subprocs_num; i++)
         waitpid(pids[i], NULL, 0);
