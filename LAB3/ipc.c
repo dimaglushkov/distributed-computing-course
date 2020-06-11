@@ -27,7 +27,11 @@ int receive(void * self, local_id from, Message * msg) {
     } while (num_bytes_read <= 0);
 
     read(io_fd->read_fd[from][io_fd->balance.s_id], &(msg->s_payload), msg->s_header.s_payload_len);
-//    sleep(1);
+
+    if (msg->s_header.s_local_time > *(((IOLinker*) self) -> lamport_time_p))
+        *(((IOLinker*) self) -> lamport_time_p) = msg->s_header.s_local_time;
+
+    (*(((IOLinker*) self) -> lamport_time_p))++;
 
     return 0;
 }
@@ -48,6 +52,11 @@ int receive_any(void * self, Message * msg) {
 
         src_id++;
     }
+
+    if (msg->s_header.s_local_time > *(((IOLinker*) self) -> lamport_time_p))
+        *(((IOLinker*) self) -> lamport_time_p) = msg->s_header.s_local_time;
+
+    (*(((IOLinker*) self) -> lamport_time_p))++;
 
     return 0;
 }
