@@ -265,14 +265,15 @@ int run_subproc(IOLinker io_fd) {
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
                                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in =
+                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance_pending_in;
 
                         io_fd.balance.s_history_len++;
                     }
 
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance - transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = transfer->s_amount;
                     io_fd.balance.s_history_len++;
 
                     set_time_msg(msg);
@@ -287,14 +288,15 @@ int run_subproc(IOLinker io_fd) {
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
                                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
                         io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in =
+                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance_pending_in;
 
                         io_fd.balance.s_history_len++;
                     }
 
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance + transfer->s_amount;
                     io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = -(transfer->s_amount);
 
                     io_fd.balance.s_history_len++;
 
@@ -436,6 +438,7 @@ int main(int argc, char **argv) {
     pids[PARENT_ID] = getpid();
 
     IOLinker io_fd = create_pipes(subprocs_num);
+    io_fd.lamport_time_p = &lamport_time;
 
     log_begin();
 
