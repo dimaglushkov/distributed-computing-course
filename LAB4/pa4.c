@@ -254,61 +254,80 @@ int run_subproc(IOLinker io_fd) {
     // actual work
 
     char log_loop_operation[strlen(log_loop_operation_fmt)];
-    if (!io_fd.use_critical_section)
-        for (int i = 1; i < io_fd.balance.s_id * 5; i++) {
+
+    if (!io_fd.use_critical_section) {
+        // No --mutexl given
+        for (int i = 1; i <= io_fd.balance.s_id * 5; i++) {
             sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
             print(log_loop_operation);
         }
 
-    int running = 1;
-    do{
-        Message * msg = (Message *) malloc(sizeof(Message));
-        receive_any(&io_fd, msg);
+        sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id,
+                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
+        done_msg.s_header.s_magic = MESSAGE_MAGIC;
+        done_msg.s_header.s_type = DONE;
+        done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
 
-        switch (msg->s_header.s_type){
-            case CS_REQUEST:
+        log_write_all(done_msg.s_payload);
 
-                break;
+        confer_all(&io_fd, &done_msg);
 
-            case CS_REPLY:
+        log_all_done(get_lamport_time(), io_fd.balance.s_id);
 
-                break;
+    }
+    else {
+        // --mutexl given
+        int running = 1;
+        do {
+            Message *msg = (Message *) malloc(sizeof(Message));
+            receive_any(&io_fd, msg);
 
-            case CS_RELEASE:
+            switch (msg->s_header.s_type) {
+                case CS_REQUEST:
 
-                break;
+                    break;
 
-            case STOP:
-                // --------------------------------------
-                // finishing
-                sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id, io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
-                done_msg.s_header.s_magic = MESSAGE_MAGIC;
-                done_msg.s_header.s_type = DONE;
-                done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
+                case CS_REPLY:
 
-                log_write_all(done_msg.s_payload);
+                    break;
 
-                confer_all(&io_fd, &done_msg);
+                case CS_RELEASE:
 
-                log_all_done(get_lamport_time(), io_fd.balance.s_id);
+                    break;
 
-                // exchanged done with everybody
+                case STOP:
+                    // --------------------------------------
+                    // finishing
+                    sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id,
+                            io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
+                    done_msg.s_header.s_magic = MESSAGE_MAGIC;
+                    done_msg.s_header.s_type = DONE;
+                    done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
 
-                balance_history_msg.s_header.s_type = BALANCE_HISTORY;
-                balance_history_msg.s_header.s_local_time = get_lamport_time();
-                balance_history_msg.s_header.s_magic = MESSAGE_MAGIC;
-                balance_history_msg.s_header.s_payload_len = sizeof(BalanceHistory);
-                memcpy(&balance_history_msg.s_payload, &io_fd.balance, sizeof(BalanceHistory));
+                    log_write_all(done_msg.s_payload);
 
-                set_time_msg(&balance_history_msg);
-                send(&io_fd, 0, &balance_history_msg);
+                    confer_all(&io_fd, &done_msg);
 
-                running = 0;
-                break;
-        }
+                    log_all_done(get_lamport_time(), io_fd.balance.s_id);
 
-        free(msg);
-    } while(running);
+                    // exchanged done with everybody
+
+                    balance_history_msg.s_header.s_type = BALANCE_HISTORY;
+                    balance_history_msg.s_header.s_local_time = get_lamport_time();
+                    balance_history_msg.s_header.s_magic = MESSAGE_MAGIC;
+                    balance_history_msg.s_header.s_payload_len = sizeof(BalanceHistory);
+                    memcpy(&balance_history_msg.s_payload, &io_fd.balance, sizeof(BalanceHistory));
+
+                    set_time_msg(&balance_history_msg);
+                    send(&io_fd, 0, &balance_history_msg);
+
+                    running = 0;
+                    break;
+            }
+
+            free(msg);
+        } while (running);
+    }
 
     return 0;
 }
