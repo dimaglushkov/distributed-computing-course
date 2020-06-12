@@ -41,6 +41,88 @@ timestamp_t get_lamport_time() {
 }
 
 
+int request_cs(const void * self) {
+    IOLinker * io_fd = (IOLinker *) self;
+
+    io_fd->queue[io_fd->balance.s_id] = *io_fd->lamport_time_p;
+
+    Message init_request_msg;
+    init_request_msg.s_header.s_magic = MESSAGE_MAGIC;
+    init_request_msg.s_header.s_type = CS_REQUEST;
+    init_request_msg.s_payload[0] = '\0';
+    init_request_msg.s_header.s_payload_len = 1;
+
+    set_time_msg(&init_request_msg);
+    send_multicast(io_fd, &init_request_msg);
+
+    int waiting_in_queue = 1;
+    int next_to_cs = 1;
+    timestamp_t min_time = io_fd->queue[1];
+    timestamp_t received_from[io_fd->subprocs_num + 1];
+    for (int i = 0; i <= io_fd->subprocs_num; i++)
+        received_from[i] = 0;
+
+    do {
+        Message *msg = (Message *) malloc(sizeof(Message));
+        receive_any(&io_fd, msg);
+
+        switch (msg->s_header.s_type) {
+            case CS_REQUEST:
+                // check if its a proper time
+                received_from[io_fd->last_sender] = get_lamport_time();
+                io_fd->queue[io_fd->last_sender] = get_lamport_time();
+
+                msg->s_header.s_type = CS_REPLY;
+                set_time_msg(msg);
+                send(&io_fd, io_fd->last_sender, msg);
+                break;
+
+            case CS_REPLY:
+                received_from[io_fd->last_sender] = get_lamport_time();
+                break;
+
+            case CS_RELEASE:
+                received_from[io_fd->last_sender] = get_lamport_time();
+                io_fd->queue[io_fd->last_sender] = 0;
+                break;
+        }
+        free(msg);
+
+        int received_from_everyone = 1;
+        for (int i = 1; i <= io_fd->subprocs_num; i++){
+            if (received_from[i] == 0)
+                received_from_everyone = 0;
+            if (io_fd->queue[i] < min_time){
+                next_to_cs = i;
+                min_time = io_fd->queue[i];
+            }
+        }
+
+        if (received_from_everyone && next_to_cs == io_fd->balance.s_id)
+            waiting_in_queue = 0;
+
+    } while(waiting_in_queue);
+
+    return 0;
+}
+
+
+int release_cs(const void * self) {
+    IOLinker * io_fd = (IOLinker *) self;
+
+    Message release_msg;
+    release_msg.s_header.s_magic = MESSAGE_MAGIC;
+    release_msg.s_header.s_type = CS_RELEASE;
+    release_msg.s_payload[0] = '\0';
+    release_msg.s_header.s_payload_len = 1;
+
+    set_time_msg(&release_msg);
+    send_multicast(io_fd, &release_msg);
+
+    return 0;
+}
+
+
 IOLinker create_pipes(local_id subproc_num) {
     IOLinker io_fd;
     io_fd.subprocs_num = subproc_num;
@@ -276,94 +358,25 @@ int run_subproc(IOLinker io_fd) {
 
     } else {
         // --mutexl given
+        int num_to_send = io_fd.balance.s_id * 5;
+        for (int i = 1; i <= num_to_send; ++i) {
+            request_cs(&io_fd);
+            sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
+            print(log_loop_operation);
+            release_cs(&io_fd);
+        }
+        sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id,
+                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
+        done_msg.s_header.s_magic = MESSAGE_MAGIC;
+        done_msg.s_header.s_type = DONE;
+        done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
 
-        Message init_request_msg;
-        start_msg.s_header.s_magic = MESSAGE_MAGIC;
-        start_msg.s_header.s_type = CS_REQUEST;
-        //start_msg.s_payload[0] = '\0';
-        //start_msg.s_header.s_payload_len = 1;
+        log_write_all(done_msg.s_payload);
 
-        local_queue[io_fd.balance.s_id] = get_lamport_time();
+        confer_all(&io_fd, &done_msg);
 
-        set_time_msg(&init_request_msg);
-        send_multicast(&io_fd, &init_request_msg);
+        log_all_done(get_lamport_time(), io_fd.balance.s_id);
 
-        for (local_id from = 1; from <= io_fd.subprocs_num; from++)
-            if (from != io_fd.balance.s_id) {
-                Message * new_msg = (Message *) malloc(sizeof(Message));
-                receive(&io_fd, from, new_msg);
-                // possible error (mesage time)
-                local_queue[from] = *io_fd.lamport_time_p;
-
-                new_msg->s_header.s_type = CS_REPLY;
-                set_time_msg(new_msg);
-                send(&io_fd, from, new_msg);
-
-                free(new_msg);
-            }
-
-        /*int num_of_prints = io_fd.balance.s_id * 5;
-        if (num_of_prints > 0) {
-            int min_time = local_queue[0];
-            for (int i = 1; i < io_fd.subprocs_num; ++i) {
-                if (local_queue[i] < min_time)
-                    min_time = local_queue[i];
-            }
-
-            if (local_queue[io_fd.balance.s_id] = min_time)
-
-        } */
-
-        int running = 1;
-        do {
-            Message *msg = (Message *) malloc(sizeof(Message));
-            receive_any(&io_fd, msg);
-
-            switch (msg->s_header.s_type) {
-                case CS_REQUEST:
-
-                    break;
-
-                case CS_REPLY:
-
-                    break;
-
-                case CS_RELEASE:
-
-                    break;
-
-                case STOP:
-                    // --------------------------------------
-                    // finishing
-                    sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id,
-                            io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
-                    done_msg.s_header.s_magic = MESSAGE_MAGIC;
-                    done_msg.s_header.s_type = DONE;
-                    done_msg.s_header.s_payload_len = strlen(done_msg.s_payload);
-
-                    log_write_all(done_msg.s_payload);
-
-                    confer_all(&io_fd, &done_msg);
-
-                    log_all_done(get_lamport_time(), io_fd.balance.s_id);
-
-                    // exchanged done with everybody
-
-                    balance_history_msg.s_header.s_type = BALANCE_HISTORY;
-                    balance_history_msg.s_header.s_local_time = get_lamport_time();
-                    balance_history_msg.s_header.s_magic = MESSAGE_MAGIC;
-                    balance_history_msg.s_header.s_payload_len = sizeof(BalanceHistory);
-                    memcpy(&balance_history_msg.s_payload, &io_fd.balance, sizeof(BalanceHistory));
-
-                    set_time_msg(&balance_history_msg);
-                    send(&io_fd, 0, &balance_history_msg);
-
-                    running = 0;
-                    break;
-            }
-
-            free(msg);
-        } while (running);
     }
 
     return 0;
@@ -371,83 +384,22 @@ int run_subproc(IOLinker io_fd) {
 
 
 int run_proc(IOLinker io_fd, pid_t * pids){
-    Message * balance_history_msg;
-    AllHistory all_history;
-    time_t max_time = 0;
-
-    all_history.s_history_len = io_fd.subprocs_num;
-
     io_fd.balance.s_id = 0;
     filter_pipes(&io_fd);
+
+    for (int from = 1; from <= io_fd.subprocs_num; from++) {
+        Message msg;
+        receive(&io_fd, from, &msg);
+    }
+    log_all_started(io_fd.balance.s_id);
 
 
     for (int from = 1; from <= io_fd.subprocs_num; from++) {
         Message msg;
         receive(&io_fd, from, &msg);
     }
-    log_all_started(get_lamport_time(), io_fd.balance.s_id);
+    log_all_done(io_fd.cur_id);
 
-    bank_robbery(&io_fd, io_fd.subprocs_num);
-
-    Message stop_msg;
-    stop_msg.s_header.s_type = STOP;
-    stop_msg.s_header.s_magic = MESSAGE_MAGIC;
-    stop_msg.s_header.s_local_time = get_lamport_time();
-    stop_msg.s_header.s_payload_len = 0;
-
-    confer_all(&io_fd, &stop_msg);
-    log_all_done(get_lamport_time(), io_fd.balance.s_id);
-
-    for (int i = 0; i < io_fd.subprocs_num; i++) {
-        BalanceHistory new_history;
-        balance_history_msg = (Message *) malloc(sizeof(Message));
-        receive(&io_fd, i + 1, balance_history_msg);
-        new_history = *(BalanceHistory*) balance_history_msg->s_payload;
-        all_history.s_history[i] = new_history;
-
-        if (new_history.s_history[new_history.s_history_len - 1].s_time > max_time){
-            max_time = new_history.s_history[new_history.s_history_len - 1].s_time;
-        }
-
-        free(balance_history_msg);
-    }
-
-    int total = 0;
-
-    for (int i = 0; i < io_fd.subprocs_num; i++) {
-        time_t cur_max_time = all_history.s_history[i].s_history[all_history.s_history[i].s_history_len - 1].s_time;
-        uint8_t cur_len = all_history.s_history[i].s_history_len;
-
-        while (cur_max_time < max_time) {
-            all_history.s_history[i].s_history[cur_len].s_balance =
-                    all_history.s_history[i].s_history[cur_len - 1].s_balance;
-            all_history.s_history[i].s_history[cur_len].s_time = cur_len - 1;
-            all_history.s_history[i].s_history[cur_len].s_balance_pending_in = 0;
-
-            cur_len++;
-            cur_max_time++;
-        }
-
-        total += all_history.s_history[i].s_history[0].s_balance;
-
-        all_history.s_history[i].s_history_len = cur_len;
-    }
-
-    for (int i = 1; i <= max_time; i++){
-        int cur_total = 0;
-        for (int j = 0; j < io_fd.subprocs_num; j++)
-            cur_total += all_history.s_history[j].s_history[i].s_balance;
-
-        if (cur_total < total){
-            for (int j = 0; j < io_fd.subprocs_num; j++){
-                if (all_history.s_history[j].s_history[i - 1].s_balance_pending_in != 0 || all_history.s_history[j].s_history[i].s_balance < all_history.s_history[j].s_history[i - 1].s_balance)
-                    all_history.s_history[j].s_history[i].s_balance_pending_in = total - cur_total;
-            }
-        }
-
-    }
-
-    print_history(&all_history);
 
     for (int i = 1; i <= io_fd.subprocs_num; i++)
         waitpid(pids[i], NULL, 0);
@@ -458,7 +410,7 @@ int run_proc(IOLinker io_fd, pid_t * pids){
 int main(int argc, char **argv) {
     local_id subprocs_num = -1;
     int * init_balances;
-    bool use_critical_section = 0;
+    int use_critical_section = 0;
 
     if (argc < 3)
         return -1;
@@ -470,7 +422,7 @@ int main(int argc, char **argv) {
             for (int j = 0; j < subprocs_num; j++)
                 init_balances[j] = (int)strtol(argv[i + j + 1], NULL, 10);
         }
-        if (strcmp(argv[i], "--mutexl"))
+        if (!strcmp(argv[i], "--mutexl"))
             use_critical_section = 1;
     }
 
@@ -489,11 +441,11 @@ int main(int argc, char **argv) {
             io_fd.use_critical_section = use_critical_section;
             io_fd.balance.s_id = i;
             io_fd.balance.s_history_len = 0;
+            io_fd.queue = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = init_balances[i - 1];
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
             io_fd.balance.s_history_len++;
-
 
             return run_subproc(io_fd);
         }

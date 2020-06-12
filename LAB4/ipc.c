@@ -56,6 +56,7 @@ int receive_any(void * self, Message * msg) {
     if (msg->s_header.s_local_time > *(((IOLinker*) self) -> lamport_time_p))
         *(((IOLinker*) self) -> lamport_time_p) = msg->s_header.s_local_time;
 
+    ((IOLinker*) self) -> last_sender = (local_id) src_id;
     (*(((IOLinker*) self) -> lamport_time_p))++;
 
     return 0;
