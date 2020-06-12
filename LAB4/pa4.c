@@ -5,11 +5,11 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
+
 #include "logger.h"
 #include "ipc_io.h"
 #include "ipc.h"
 #include "banking.h"
-
 
 
 timestamp_t lamport_time = 0;
@@ -235,6 +235,8 @@ int run_subproc(IOLinker io_fd) {
     TransferOrder * transfer;
     filter_pipes(&io_fd);
 
+    int * local_queue;
+
     // starting
     Message start_msg;
     sprintf(start_msg.s_payload, log_started_fmt, get_lamport_time(), io_fd.balance.s_id, getpid(), getppid(), io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
@@ -251,65 +253,29 @@ int run_subproc(IOLinker io_fd) {
     // --------------------------------------
     // actual work
 
+    char log_loop_operation[strlen(log_loop_operation_fmt)];
+    if (!io_fd.use_critical_section)
+        for (int i = 1; i < io_fd.balance.s_id * 5; i++) {
+            sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
+            print(log_loop_operation);
+        }
+
     int running = 1;
     do{
         Message * msg = (Message *) malloc(sizeof(Message));
         receive_any(&io_fd, msg);
 
         switch (msg->s_header.s_type){
-            case TRANSFER:
-                transfer = (TransferOrder*) msg->s_payload;
+            case CS_REQUEST:
 
-                if (transfer->s_src == io_fd.balance.s_id){
-                    while (get_lamport_time() != io_fd.balance.s_history_len - 1) {
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
-                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
+                break;
 
-                        io_fd.balance.s_history_len++;
-                    }
+            case CS_REPLY:
 
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance - transfer->s_amount;
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
-                    io_fd.balance.s_history_len++;
+                break;
 
-                    set_time_msg(msg);
-                    send(&io_fd, transfer->s_dst, msg);
+            case CS_RELEASE:
 
-                    char transfer_out_str[strlen(log_transfer_out_fmt)];
-                    sprintf(transfer_out_str, log_transfer_out_fmt, get_lamport_time(), io_fd.balance.s_id, transfer->s_amount, transfer->s_dst);
-                    log_write_all(transfer_out_str);
-                }
-                else{
-                    while (get_lamport_time() != io_fd.balance.s_history_len - 1) {
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance =
-                                io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = io_fd.balance.s_history_len - 1;
-                        io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
-
-                        io_fd.balance.s_history_len++;
-                    }
-
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance + transfer->s_amount;
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
-                    io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
-
-                    io_fd.balance.s_history_len++;
-
-                    ack_msg.s_header.s_type = ACK;
-                    ack_msg.s_header.s_local_time = get_lamport_time();
-                    ack_msg.s_header.s_magic = MESSAGE_MAGIC;
-                    ack_msg.s_header.s_payload_len = 0;
-
-                    set_time_msg(&ack_msg);
-                    send(&io_fd, 0, &ack_msg);
-
-                    char transfer_in_str[strlen(log_transfer_in_fmt)];
-                    sprintf(transfer_in_str, log_transfer_in_fmt, get_lamport_time(), io_fd.balance.s_id, transfer->s_amount, transfer->s_src);
-                    log_write_all(transfer_in_str);
-                }
                 break;
 
             case STOP:
@@ -436,6 +402,7 @@ int run_proc(IOLinker io_fd, pid_t * pids){
 int main(int argc, char **argv) {
     local_id subprocs_num = -1;
     int * init_balances;
+    bool use_critical_section = 0;
 
     if (argc < 3)
         return -1;
@@ -447,6 +414,8 @@ int main(int argc, char **argv) {
             for (int j = 0; j < subprocs_num; j++)
                 init_balances[j] = (int)strtol(argv[i + j + 1], NULL, 10);
         }
+        if (strcmp(argv[i], "--mutexl"))
+            use_critical_section = 1;
     }
 
     pid_t *pids = (pid_t *)malloc((subprocs_num + 1) * sizeof(pid_t));
@@ -461,6 +430,7 @@ int main(int argc, char **argv) {
         pid_t fork_pid = fork();
 
         if (fork_pid == 0) {
+            io_fd.use_critical_section = use_critical_section;
             io_fd.balance.s_id = i;
             io_fd.balance.s_history_len = 0;
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = init_balances[i - 1];

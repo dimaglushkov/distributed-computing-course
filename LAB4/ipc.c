@@ -29,7 +29,7 @@ int receive(void * self, local_id from, Message * msg) {
     read(io_fd->read_fd[from][io_fd->balance.s_id], &(msg->s_payload), msg->s_header.s_payload_len);
 
     if (msg->s_header.s_local_time > *(((IOLinker*) self) -> lamport_time_p))
-        *(((IOLinker*) self) -> lamport_time_p) st = msg->s_header.s_local_time;
+        *(((IOLinker*) self) -> lamport_time_p) = msg->s_header.s_local_time;
 
     (*(((IOLinker*) self) -> lamport_time_p))++;
 
