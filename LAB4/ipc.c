@@ -1,6 +1,7 @@
 #include "ipc.h"
 #include "ipc_io.h"
 #include <unistd.h>
+#include <stdio.h>
 
 
 int send(void * self, local_id dst, const Message * msg) {
