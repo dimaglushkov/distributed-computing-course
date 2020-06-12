@@ -235,7 +235,7 @@ int run_subproc(IOLinker io_fd) {
     TransferOrder * transfer;
     filter_pipes(&io_fd);
 
-    int * local_queue;
+    int local_queue[io_fd.subprocs_num];
 
     // starting
     Message start_msg;
@@ -256,7 +256,7 @@ int run_subproc(IOLinker io_fd) {
     char log_loop_operation[strlen(log_loop_operation_fmt)];
 
     if (!io_fd.use_critical_section) {
-        // No --mutexl given
+        // no --mutexl given
         for (int i = 1; i <= io_fd.balance.s_id * 5; i++) {
             sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
             print(log_loop_operation);
@@ -274,9 +274,46 @@ int run_subproc(IOLinker io_fd) {
 
         log_all_done(get_lamport_time(), io_fd.balance.s_id);
 
-    }
-    else {
+    } else {
         // --mutexl given
+
+        Message init_request_msg;
+        start_msg.s_header.s_magic = MESSAGE_MAGIC;
+        start_msg.s_header.s_type = CS_REQUEST;
+        //start_msg.s_payload[0] = '\0';
+        //start_msg.s_header.s_payload_len = 1;
+
+        local_queue[io_fd.balance.s_id] = get_lamport_time();
+
+        set_time_msg(&init_request_msg);
+        send_multicast(&io_fd, &init_request_msg);
+
+        for (local_id from = 1; from <= io_fd.subprocs_num; from++)
+            if (from != io_fd.balance.s_id) {
+                Message * new_msg = (Message *) malloc(sizeof(Message));
+                receive(&io_fd, from, new_msg);
+                // possible error (mesage time)
+                local_queue[from] = *io_fd.lamport_time_p;
+
+                new_msg->s_header.s_type = CS_REPLY;
+                set_time_msg(new_msg);
+                send(&io_fd, from, new_msg);
+
+                free(new_msg);
+            }
+
+        /*int num_of_prints = io_fd.balance.s_id * 5;
+        if (num_of_prints > 0) {
+            int min_time = local_queue[0];
+            for (int i = 1; i < io_fd.subprocs_num; ++i) {
+                if (local_queue[i] < min_time)
+                    min_time = local_queue[i];
+            }
+
+            if (local_queue[io_fd.balance.s_id] = min_time)
+
+        } */
+
         int running = 1;
         do {
             Message *msg = (Message *) malloc(sizeof(Message));
