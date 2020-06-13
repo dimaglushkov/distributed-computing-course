@@ -81,32 +81,6 @@ int filter_pipes(IOLinker *io_fd){
 }
 
 
-void transfer(void * parent_data, local_id src, local_id dst, balance_t amount)
-{
-    IOLinker * io_fd = (IOLinker *) parent_data;
-
-    Message start_of_transfer_msg;
-    start_of_transfer_msg.s_header.s_type = TRANSFER;
-    start_of_transfer_msg.s_header.s_local_time = get_lamport_time();
-    start_of_transfer_msg.s_header.s_magic = MESSAGE_MAGIC;
-    start_of_transfer_msg.s_header.s_payload_len = sizeof(TransferOrder);
-
-    TransferOrder order;
-    order.s_src = src;
-    order.s_dst = dst;
-    order.s_amount = amount;
-
-    memcpy(&start_of_transfer_msg.s_payload, &order, sizeof(TransferOrder));
-    Message * end_of_transfer_msg = (Message *) malloc(sizeof(Message));
-
-    set_time_msg(&start_of_transfer_msg);
-    send(io_fd, src, &start_of_transfer_msg);
-    receive(io_fd, dst, end_of_transfer_msg);
-    free(end_of_transfer_msg);
-
-}
-
-
 int request_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
 
@@ -121,8 +95,6 @@ int request_cs(const void * self) {
     set_time_msg(&init_request_msg);
     send_multicast(io_fd, &init_request_msg);
 
-//    printf("\tProcess %d: sent multicast\n", io_fd->balance.s_id);
-
     int waiting_in_queue = 1;
     int next_to_cs = 1;
     timestamp_t min_time = INT16_MAX;
@@ -135,33 +107,19 @@ int request_cs(const void * self) {
 
         switch (msg->s_header.s_type) {
             case CS_REQUEST:
-//printf("\tProcess %d: CS_REQUEST from %d\n", io_fd->balance.s_id, io_fd->last_sender);
-//                 check if its a proper time
                 io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
                 io_fd->queue[io_fd->last_sender] = msg->s_header.s_local_time;
 
                 msg->s_header.s_type = CS_REPLY;
                 set_time_msg(msg);
                 send(io_fd, io_fd->last_sender, msg);
-//printf("\tProcess %d: queue", io_fd->balance.s_id);
-//for (int i = 1; i <= io_fd->subprocs_num; i++) {
-//    printf("%d ", io_fd->queue[i]);
-//}
-//printf("| %d\n", io_fd->queue[io_fd->balance.s_id]);
                 break;
 
             case CS_REPLY:
-//printf("\tProcess %d: CS_REPLY from %d\n", io_fd->balance.s_id, io_fd->last_sender);
                 io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-//printf("\tProcess %d: queue", io_fd->balance.s_id);
-//for (int i = 1; i <= io_fd->subprocs_num; i++) {
-//    printf("%d ", io_fd->queue[i]);
-//}
-//printf("| %d\n", io_fd->queue[io_fd->balance.s_id]);
                 break;
 
             case CS_RELEASE:
-//printf("\tProcess %d: CS_RELEASE from %d\n", io_fd->balance.s_id, io_fd->last_sender);
                 io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
                 io_fd->queue[io_fd->last_sender] = INT16_MAX;
                 min_time = INT16_MAX;
@@ -183,13 +141,6 @@ int request_cs(const void * self) {
                 min_time = io_fd->queue[i];
             }
         }
-//        printf("\tProcess %d: next_to_cs = %d\n", io_fd->balance.s_id, next_to_cs);
-//        printf("\tProcess %d: min_time = %d\n", io_fd->balance.s_id, min_time);
-//        printf("\tProcess %d: received_from ", io_fd->balance.s_id);
-//        for (int i = 1; i <= io_fd->subprocs_num; i++) {
-//            printf("%d ", io_fd->received_at[i]);
-//        }
-//        printf("| %d\n", io_fd->received_at[io_fd->balance.s_id]);
 
         if (received_from_everyone && next_to_cs == io_fd->balance.s_id)
             waiting_in_queue = 0;
@@ -218,10 +169,7 @@ int release_cs(const void * self) {
 
 
 int run_subproc(IOLinker io_fd) {
-    Message ack_msg;
     Message done_msg;
-    Message balance_history_msg;
-    TransferOrder * transfer;
     filter_pipes(&io_fd);
 
     // starting
@@ -264,14 +212,11 @@ int run_subproc(IOLinker io_fd) {
 
         for (int i = 1; i <= num_to_send; ++i) {
             request_cs(&io_fd);
-//            printf("\tProcess %d: Entering CS\n", io_fd.balance.s_id);
             sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
             print(log_loop_operation);
-//            printf("\tProcess %d: Releasing CS\n", io_fd.balance.s_id);
             release_cs(&io_fd);
         }
 
-//        printf("\tProcess %d: num of received dones = %d\n", io_fd.balance.s_id, io_fd.num_of_done);
 
         sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id,
                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
@@ -302,6 +247,8 @@ int run_subproc(IOLinker io_fd) {
         }
         log_all_done(get_lamport_time(), io_fd.balance.s_id);
     }
+    free(io_fd.received_at);
+    free(io_fd.queue);
 
     return 0;
 }
@@ -346,7 +293,7 @@ int main(int argc, char **argv) {
             subprocs_num = (local_id)strtol(argv[++i], NULL, 10);
             init_balances = (int*) malloc(sizeof(int) * subprocs_num);
             for (int j = 0; j < subprocs_num; j++)
-                init_balances[j] = (int)strtol(argv[i + j + 1], NULL, 10);
+                init_balances[j] = 0;
         }
         if (!strcmp(argv[i], "--mutexl"))
             use_critical_section = 1;
