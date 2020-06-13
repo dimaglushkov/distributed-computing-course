@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <stdint.h>
 
 
 #include "logger.h"
@@ -109,60 +110,54 @@ void transfer(void * parent_data, local_id src, local_id dst, balance_t amount)
 int request_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
 
-    io_fd->queue[io_fd->balance.s_id] = *io_fd->lamport_time_p;
 
-    char * blank_str = "HUYNA";
+    char * blank_str = "blank";
     Message init_request_msg;
     init_request_msg.s_header.s_magic = MESSAGE_MAGIC;
     init_request_msg.s_header.s_type = CS_REQUEST;
     memcpy(&init_request_msg.s_payload, blank_str, strlen(blank_str));
-    init_request_msg.s_header.s_payload_len = strlen(init_request_msg.s_payload);
+    init_request_msg.s_header.s_payload_len = strlen(init_request_msg.s_payload) + 1;
 
     set_time_msg(&init_request_msg);
     send_multicast(io_fd, &init_request_msg);
+    io_fd->queue[io_fd->balance.s_id] = *io_fd->lamport_time_p;
 
     int waiting_in_queue = 1;
     int next_to_cs = 1;
-    timestamp_t min_time = io_fd->queue[1];
+    timestamp_t min_time = INT16_MAX;
     timestamp_t received_from[io_fd->subprocs_num + 1];
     for (int i = 0; i <= io_fd->subprocs_num; i++)
         received_from[i] = 0;
 
-    printf("\tProcess %d starting receiving messages\n", io_fd->balance.s_id);
-
-
     do {
         Message *msg = (Message *) malloc(sizeof(Message));
-        printf("\tProcess %d tring to recv\n", io_fd->balance.s_id);
-        receive_any(&io_fd, msg);
-        printf("\tProcess %d recevd\n", io_fd->balance.s_id);
+        receive_any(io_fd, msg);
 
         switch (msg->s_header.s_type) {
             case CS_REQUEST:
-                // check if its a proper time
-                received_from[io_fd->last_sender] = get_lamport_time();
-                io_fd->queue[io_fd->last_sender] = get_lamport_time();
+                received_from[io_fd->last_sender] = msg->s_header.s_local_time;
+                io_fd->queue[io_fd->last_sender] = msg->s_header.s_local_time;
 
                 msg->s_header.s_type = CS_REPLY;
                 set_time_msg(msg);
-                send(&io_fd, io_fd->last_sender, msg);
+                send(io_fd, io_fd->last_sender, msg);
                 break;
 
             case CS_REPLY:
-                received_from[io_fd->last_sender] = get_lamport_time();
+                received_from[io_fd->last_sender] = msg->s_header.s_local_time;
                 break;
 
             case CS_RELEASE:
-                received_from[io_fd->last_sender] = get_lamport_time();
-                io_fd->queue[io_fd->last_sender] = 0;
+                received_from[io_fd->last_sender] = msg->s_header.s_local_time;
+                io_fd->queue[io_fd->last_sender] = INT16_MAX;
+                min_time = INT16_MAX;
                 break;
         }
         free(msg);
 
-        puts("a");
         int received_from_everyone = 1;
         for (int i = 1; i <= io_fd->subprocs_num; i++){
-            if (received_from[i] == 0)
+            if (received_from[i] <= io_fd->queue[io_fd->balance.s_id] && i != io_fd->balance.s_id)
                 received_from_everyone = 0;
             if (io_fd->queue[i] < min_time){
                 next_to_cs = i;
@@ -182,12 +177,12 @@ int request_cs(const void * self) {
 int release_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
 
-    char * blank_str = "";
+    char * blank_str = "blank";
     Message release_msg;
     release_msg.s_header.s_magic = MESSAGE_MAGIC;
-    release_msg.s_header.s_type = CS_REQUEST;
+    release_msg.s_header.s_type = CS_RELEASE;
     memcpy(&release_msg.s_payload, blank_str, strlen(blank_str));
-    release_msg.s_header.s_payload_len = strlen(release_msg.s_payload);
+    release_msg.s_header.s_payload_len = strlen(release_msg.s_payload) + 1;
 
     set_time_msg(&release_msg);
     send_multicast(io_fd, &release_msg);
@@ -226,11 +221,9 @@ int run_subproc(IOLinker io_fd) {
 
     } else {
         int num_to_send = io_fd.balance.s_id * 5;
-//        printf("\tProcess %d: Starting exchange in cycle up to %d\n", io_fd.balance.s_id, num_to_send);
         for (int i = 1; i <= num_to_send; ++i) {
             request_cs(&io_fd);
             sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
-            printf("\tProcess %d: doing %d/%d\n", io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
             print(log_loop_operation);
             release_cs(&io_fd);
         }
@@ -262,7 +255,9 @@ int run_proc(IOLinker io_fd, pid_t * pids){
 
     for (int from = 1; from <= io_fd.subprocs_num; from++) {
         Message msg;
-        receive(&io_fd, from, &msg);
+        receive_any(&io_fd, &msg);
+        if (msg.s_header.s_type != DONE)
+            from--;
     }
     log_all_done(get_lamport_time(), io_fd.balance.s_id);
 
