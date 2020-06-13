@@ -8,8 +8,10 @@ typedef struct {
     BalanceHistory balance;
     int use_critical_section;
     local_id last_sender;
+    local_id num_of_done;
     timestamp_t * lamport_time_p;
     timestamp_t * queue;
+    timestamp_t * received_at;
     int write_fd[MAX_PROCESS_ID + 1][MAX_PROCESS_ID + 1],
          read_fd[MAX_PROCESS_ID + 1][MAX_PROCESS_ID + 1];
 } IOLinker;
