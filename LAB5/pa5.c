@@ -6,7 +6,6 @@
 #include <fcntl.h>
 #include <stdint.h>
 
-
 #include "logger.h"
 #include "ipc_io.h"
 #include "ipc.h"
@@ -84,7 +83,6 @@ int filter_pipes(IOLinker *io_fd){
 int request_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
 
-
     char * blank_str = "blank";
     Message init_request_msg;
     init_request_msg.s_header.s_magic = MESSAGE_MAGIC;
@@ -92,14 +90,19 @@ int request_cs(const void * self) {
     memcpy(&init_request_msg.s_payload, blank_str, strlen(blank_str));
     init_request_msg.s_header.s_payload_len = strlen(init_request_msg.s_payload) + 1;
 
+
     set_time_msg(&init_request_msg);
     send_multicast(io_fd, &init_request_msg);
 
-    int waiting_in_queue = 1;
-    int next_to_cs = 1;
-    timestamp_t min_time = INT16_MAX;
+    io_fd->sent_at[io_fd->balance.s_id] = *io_fd->lamport_time_p;
 
-    io_fd->queue[io_fd->balance.s_id] = *io_fd->lamport_time_p;
+
+    int waiting_in_queue = 1;
+    int left_to_receive = io_fd->subprocs_num - 1;
+
+    for (int i = 1; i <= io_fd->subprocs_num; i++)
+        io_fd->deferred_reply[i] = 0;
+
 
     do {
         Message *msg = (Message *) malloc(sizeof(Message));
@@ -107,42 +110,37 @@ int request_cs(const void * self) {
 
         switch (msg->s_header.s_type) {
             case CS_REQUEST:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                io_fd->queue[io_fd->last_sender] = msg->s_header.s_local_time;
+                io_fd->received_time[io_fd->last_sender] = msg->s_header.s_local_time;
+//                printf("\tProcess %d: received request from %d with %d at %d\n", io_fd->balance.s_id, io_fd->last_sender, msg->s_header.s_local_time, io_fd->sent_at[io_fd->balance.s_id]);
 
-                msg->s_header.s_type = CS_REPLY;
-                set_time_msg(msg);
-                send(io_fd, io_fd->last_sender, msg);
+                if (msg->s_header.s_local_time > io_fd->sent_at[io_fd->balance.s_id]
+                    || (msg->s_header.s_local_time == io_fd->sent_at[io_fd->balance.s_id] && io_fd->balance.s_id < io_fd->last_sender)) {
+                    io_fd->sent_at[io_fd->last_sender] = msg->s_header.s_local_time;
+                    msg->s_header.s_type = CS_REPLY;
+                    set_time_msg(msg);
+//                    printf("\tProcess %d: replying to %d\n", io_fd->balance.s_id, io_fd->last_sender);
+                    send(io_fd, io_fd->last_sender, msg);
+                } else {
+                    io_fd->deferred_reply[io_fd->last_sender] = 1;
+//                    printf("\tProcess %d: deferring %d\n", io_fd->balance.s_id, io_fd->last_sender);
+
+                }
+
                 break;
 
             case CS_REPLY:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                break;
-
-            case CS_RELEASE:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                io_fd->queue[io_fd->last_sender] = INT16_MAX;
-                min_time = INT16_MAX;
+//                printf("\tProcess %d: received reply from %d\n", io_fd->balance.s_id, io_fd->last_sender);
+                left_to_receive--;
                 break;
 
             case DONE:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
+                io_fd->received_time[io_fd->last_sender] = msg->s_header.s_local_time;
                 io_fd->num_of_done++;
                 break;
         }
         free(msg);
 
-        int received_from_everyone = 1;
-        for (int i = 1; i <= io_fd->subprocs_num; i++){
-            if (io_fd->received_at[i] <= io_fd->queue[io_fd->balance.s_id] && io_fd->received_at[i] > 0 && i != io_fd->balance.s_id)
-                received_from_everyone = 0;
-            if (io_fd->queue[i] < min_time){
-                next_to_cs = i;
-                min_time = io_fd->queue[i];
-            }
-        }
-
-        if (received_from_everyone && next_to_cs == io_fd->balance.s_id)
+        if (!left_to_receive)
             waiting_in_queue = 0;
 
     } while(waiting_in_queue);
@@ -153,16 +151,18 @@ int request_cs(const void * self) {
 
 int release_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
+    char *blank_str = "blank";
+    Message deferred_reply_msg;
+    deferred_reply_msg.s_header.s_magic = MESSAGE_MAGIC;
+    deferred_reply_msg.s_header.s_type = CS_REPLY;
+    memcpy(&deferred_reply_msg.s_payload, blank_str, strlen(blank_str));
+    deferred_reply_msg.s_header.s_payload_len = strlen(deferred_reply_msg.s_payload) + 1;
 
-    char * blank_str = "blank";
-    Message release_msg;
-    release_msg.s_header.s_magic = MESSAGE_MAGIC;
-    release_msg.s_header.s_type = CS_RELEASE;
-    memcpy(&release_msg.s_payload, blank_str, strlen(blank_str));
-    release_msg.s_header.s_payload_len = strlen(release_msg.s_payload) + 1;
+    set_time_msg(&deferred_reply_msg);
 
-    set_time_msg(&release_msg);
-    send_multicast(io_fd, &release_msg);
+    for (int i = 1; i <= io_fd->subprocs_num; i++)
+        if(io_fd->deferred_reply[i])
+            send(io_fd, i, &deferred_reply_msg);
 
     return 0;
 }
@@ -206,8 +206,8 @@ int run_subproc(IOLinker io_fd) {
         io_fd.num_of_done = 1;
 
         for (int i = 0; i <= io_fd.subprocs_num; i++) {
-            io_fd.queue[i] = INT16_MAX;
-            io_fd.received_at[i] = 0;
+            io_fd.sent_at[i] = INT16_MAX;
+            io_fd.received_time[i] = 0;
         }
 
         for (int i = 1; i <= num_to_send; ++i) {
@@ -247,8 +247,9 @@ int run_subproc(IOLinker io_fd) {
         }
         log_all_done(get_lamport_time(), io_fd.balance.s_id);
     }
-    free(io_fd.received_at);
-    free(io_fd.queue);
+    free(io_fd.received_time);
+    free(io_fd.sent_at);
+    free(io_fd.deferred_reply);
 
     return 0;
 }
@@ -314,8 +315,9 @@ int main(int argc, char **argv) {
             io_fd.use_critical_section = use_critical_section;
             io_fd.balance.s_id = i;
             io_fd.balance.s_history_len = 0;
-            io_fd.queue = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
-            io_fd.received_at = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
+            io_fd.sent_at = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
+            io_fd.received_time = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
+            io_fd.deferred_reply = (int*) malloc(sizeof(int) * (subprocs_num + 1));
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = init_balances[i - 1];
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
