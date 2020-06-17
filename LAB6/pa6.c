@@ -84,68 +84,99 @@ int filter_pipes(IOLinker *io_fd){
 int request_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
 
-
     char * blank_str = "blank";
-    Message init_request_msg;
-    init_request_msg.s_header.s_magic = MESSAGE_MAGIC;
-    init_request_msg.s_header.s_type = CS_REQUEST;
-    memcpy(&init_request_msg.s_payload, blank_str, strlen(blank_str));
-    init_request_msg.s_header.s_payload_len = strlen(init_request_msg.s_payload) + 1;
+    Message request_msg;
 
-    set_time_msg(&init_request_msg);
-    send_multicast(io_fd, &init_request_msg);
+    // form request message
+    request_msg.s_header.s_magic = MESSAGE_MAGIC;
+    request_msg.s_header.s_type = CS_REQUEST;
+    memcpy(&request_msg.s_payload, blank_str, strlen(blank_str));
+    request_msg.s_header.s_payload_len = strlen(request_msg.s_payload) + 1;
+    set_time_msg(&request_msg);
 
-    int waiting_in_queue = 1;
-    int next_to_cs = 1;
-    timestamp_t min_time = INT16_MAX;
-
+    int waiting = 1;
     io_fd->queue[io_fd->balance.s_id] = *io_fd->lamport_time_p;
 
     do {
-        Message *msg = (Message *) malloc(sizeof(Message));
-        receive_any(io_fd, msg);
+        for (int k = 1; k <= io_fd->subprocs_num; ++k) {
+            if (k != io_fd->balance.s_id)
+                if (io_fd->forks[k].is_clear == 0 && io_fd->tokens[k].is_with_me == 1 && io_fd->forks[k].is_with_me == 1) {
+                    // this process has no fork anymore
+                    io_fd->forks[k].is_with_me = 0;
 
-        switch (msg->s_header.s_type) {
-            case CS_REQUEST:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                io_fd->queue[io_fd->last_sender] = msg->s_header.s_local_time;
+                    // sending fork to needed process
+                    Message tmp_msg;
+                    tmp_msg.s_header.s_magic = MESSAGE_MAGIC;
+                    tmp_msg.s_header.s_type = CS_REPLY;
+                    memcpy(&tmp_msg.s_payload, blank_str, strlen(blank_str));
+                    tmp_msg.s_header.s_payload_len = strlen(tmp_msg.s_payload) + 1;
+                    set_time_msg(&tmp_msg);
 
-                msg->s_header.s_type = CS_REPLY;
-                set_time_msg(msg);
-                send(io_fd, io_fd->last_sender, msg);
-                break;
-
-            case CS_REPLY:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                break;
-
-            case CS_RELEASE:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                io_fd->queue[io_fd->last_sender] = INT16_MAX;
-                min_time = INT16_MAX;
-                break;
-
-            case DONE:
-                io_fd->received_at[io_fd->last_sender] = msg->s_header.s_local_time;
-                io_fd->num_of_done++;
-                break;
+                    send(io_fd, k, &tmp_msg);
+                }
         }
-        free(msg);
 
-        int received_from_everyone = 1;
-        for (int i = 1; i <= io_fd->subprocs_num; i++){
-            if (io_fd->received_at[i] <= io_fd->queue[io_fd->balance.s_id] && io_fd->received_at[i] > 0 && i != io_fd->balance.s_id)
-                received_from_everyone = 0;
-            if (io_fd->queue[i] < min_time){
-                next_to_cs = i;
-                min_time = io_fd->queue[i];
+        int num_of_acceptions = 0;
+        for (int j = 1; j <= io_fd->subprocs_num; j++) {
+            if (j != io_fd->balance.s_id && io_fd->forks[j].is_with_me == 1) {
+                if (io_fd->forks[j].is_clear == 1 || io_fd->tokens[j].is_with_me == 0) {
+                    num_of_acceptions++;
+                }
             }
         }
 
-        if (received_from_everyone && next_to_cs == io_fd->balance.s_id)
-            waiting_in_queue = 0;
+        if (num_of_acceptions == io_fd->subprocs_num - 1) {
+            // enter cs
+            waiting = 0;
+        } else {
+            // send token on condition
+            for (int i = 1; i <= io_fd->subprocs_num; i++) {
+                if (i != io_fd->balance.s_id)
+                    if (io_fd->tokens[i].is_with_me == 1 && io_fd->forks[i].is_with_me == 0) {
+                        io_fd->tokens[i].is_with_me = 0;
+                        send(io_fd, i, &request_msg);
+                    }
+            }
+        }
 
-    } while(waiting_in_queue);
+        // if this procees is last it's not possible to receive messages
+        if (io_fd->num_of_done != io_fd->subprocs_num) {
+            Message *msg = (Message *) malloc(sizeof(Message));
+            receive_any(io_fd, msg);
+
+            switch (msg->s_header.s_type) {
+                case CS_REQUEST:
+                    // now it has marker from last sender
+                    io_fd->tokens[io_fd->last_sender].is_with_me = 1;
+
+                    if (io_fd->forks[io_fd->last_sender].is_clear == 0 && waiting != 0) {
+                        // this process has no fork anymore
+                        io_fd->forks[io_fd->last_sender].is_with_me = 0;
+
+                        msg->s_header.s_type = CS_REPLY;
+                        set_time_msg(msg);
+                        send(io_fd, io_fd->last_sender, msg);
+                    }
+
+                    break;
+
+                case CS_REPLY:
+                    // gain fork
+                    io_fd->forks[io_fd->last_sender].is_with_me = 1;
+                    // make it "clean"
+                    io_fd->forks[io_fd->last_sender].is_clear = 1;
+
+                    break;
+
+                case DONE:
+                    io_fd->num_of_done++;
+
+                    break;
+            }
+            free(msg);
+        }
+
+    } while (waiting);
 
     return 0;
 }
@@ -154,15 +185,11 @@ int request_cs(const void * self) {
 int release_cs(const void * self) {
     IOLinker * io_fd = (IOLinker *) self;
 
-    char * blank_str = "blank";
-    Message release_msg;
-    release_msg.s_header.s_magic = MESSAGE_MAGIC;
-    release_msg.s_header.s_type = CS_RELEASE;
-    memcpy(&release_msg.s_payload, blank_str, strlen(blank_str));
-    release_msg.s_header.s_payload_len = strlen(release_msg.s_payload) + 1;
-
-    set_time_msg(&release_msg);
-    send_multicast(io_fd, &release_msg);
+    // making forks "dirty"
+    for (int i = 1; i <= io_fd->subprocs_num; ++i) {
+        if (i != io_fd->balance.s_id)
+            io_fd->forks[i].is_clear = 0;
+    }
 
     return 0;
 }
@@ -194,13 +221,8 @@ int run_subproc(IOLinker io_fd) {
 
         int num_to_send = io_fd.balance.s_id * 5;
 
-        for (int i = 0; i <= io_fd.subprocs_num; i++) {
-            io_fd.queue[i] = INT16_MAX;
-            io_fd.received_at[i] = 0;
-        }
-
         // critical section
-        for (int i = 1; i <= num_to_send; ++i) {
+        for (int i = 1; i <= num_to_send; i++) {
             request_cs(&io_fd);
             sprintf(log_loop_operation, log_loop_operation_fmt, io_fd.balance.s_id, i, (io_fd.balance.s_id * 5));
             print(log_loop_operation);
@@ -208,6 +230,26 @@ int run_subproc(IOLinker io_fd) {
         }
 
         // finish block
+
+        // return forks to other processes as we don't need them anymore
+        for (int k = 1; k <= io_fd.subprocs_num; ++k) {
+            if (k != io_fd.balance.s_id)
+                if (io_fd.forks[k].is_clear == 0 && io_fd.tokens[k].is_with_me == 1 && io_fd.forks[k].is_with_me == 1) {
+                    // this process has no fork anymore
+                    io_fd.forks[k].is_with_me = 0;
+
+                    // sending fork to needed process
+                    char * blank_str = "blank";
+                    Message tmp_msg;
+                    tmp_msg.s_header.s_magic = MESSAGE_MAGIC;
+                    tmp_msg.s_header.s_type = CS_REPLY;
+                    memcpy(&tmp_msg.s_payload, blank_str, strlen(blank_str));
+                    tmp_msg.s_header.s_payload_len = strlen(tmp_msg.s_payload) + 1;
+                    set_time_msg(&tmp_msg);
+
+                    send(&io_fd, k, &tmp_msg);
+                }
+        }
 
         sprintf(done_msg.s_payload, log_done_fmt, get_lamport_time(), io_fd.balance.s_id,
                 io_fd.balance.s_history[io_fd.balance.s_history_len - 1].s_balance);
@@ -221,18 +263,30 @@ int run_subproc(IOLinker io_fd) {
         // if current process finishes faster than others,
         // it will reply on incoming requests
         while(io_fd.num_of_done < io_fd.subprocs_num){
+
             Message *msg = (Message *) malloc(sizeof(Message));
             receive_any(&io_fd, msg);
 
+            // maybe it is redundant block
             switch (msg->s_header.s_type) {
                 case CS_REQUEST:
-                    msg->s_header.s_type = CS_REPLY;
-                    msg->s_header.s_local_time = 0;
-                    send(&io_fd, io_fd.last_sender, msg);
+                    //io_fd->tokens[io_fd->last_sender].is_with_me = 1;
+
+                    if (io_fd.forks[io_fd.last_sender].is_clear == 0) {
+                        // this process has no fork anymore
+                        io_fd.forks[io_fd.last_sender].is_with_me = 0;
+
+                        msg->s_header.s_type = CS_REPLY;
+                        //msg->s_header.s_local_time = 0;
+                        set_time_msg(msg);
+                        send(&io_fd, io_fd.last_sender, msg);
+                    }
+
                     break;
 
                 case DONE:
                     io_fd.num_of_done++;
+
                     break;
             }
 
@@ -327,16 +381,37 @@ int main(int argc, char **argv) {
         pid_t fork_pid = fork();
 
         if (fork_pid == 0) {
-            io_fd.num_of_done = 1;
+
             io_fd.balance.s_id = i;
             io_fd.balance.s_history_len = 0;
-            io_fd.use_critical_section = use_critical_section;
-            io_fd.queue = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
-            io_fd.received_at = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance = init_balances[i - 1];
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_time = get_lamport_time();
             io_fd.balance.s_history[io_fd.balance.s_history_len].s_balance_pending_in = 0;
             io_fd.balance.s_history_len++;
+
+            io_fd.num_of_done = 1;
+            io_fd.use_critical_section = use_critical_section;
+            io_fd.queue = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
+            io_fd.received_at = (timestamp_t*) malloc(sizeof(timestamp_t) * (subprocs_num + 1));
+
+            // processes with higher indexes have more forks
+            // those who have no fork gain marker
+            for (int j = 1; j <= subprocs_num; j++)
+                if (i != j) {
+                    if (j < i) {
+                        io_fd.forks[j].is_with_me = 1;
+                        io_fd.forks[j].is_clear = 0;
+                        io_fd.tokens[j].is_with_me = 0;
+                    } else {
+                        io_fd.forks[j].is_with_me = 0;
+                        io_fd.forks[j].is_clear = 0;
+                        io_fd.tokens[j].is_with_me = 1;
+                    }
+                } else {
+                    io_fd.forks[j].is_with_me = -1;
+                    io_fd.forks[j].is_clear = -1;
+                    io_fd.tokens[j].is_with_me = -1;
+                }
 
             return run_subproc(io_fd);
         }
